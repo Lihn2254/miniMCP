@@ -1,9 +1,9 @@
 from mcp.server.fastmcp import FastMCP
 
-# Initialize the MCP Server
+# Inicializar MCP Server
 mcp = FastMCP("CRUD_Demo_Server")
 
-# Our simple in-memory database
+# Base de datos simple en memoria
 database = {}
 
 @mcp.tool()
@@ -49,5 +49,4 @@ def delete_item(item_id: str) -> str:
     return f"Success: Deleted item '{item_id}'."
 
 if __name__ == "__main__":
-    # Run the server using standard input/output (the default for MCP)
     mcp.run()
