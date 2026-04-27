@@ -5,7 +5,7 @@ from mcp.client.stdio import stdio_client
 import ollama
 
 # Configuration
-MODEL_NAME = "llama3.1"
+MODEL_NAME = "gemma4:e4b"
 SERVER_SCRIPT = "server.py"
 
 async def run_mcp_client():
@@ -42,11 +42,14 @@ async def run_mcp_client():
             # 5. Interactive Chat Loop
             messages = []
             while True:
-                user_input = input("\nYou: ")
-                if user_input.lower() in ['quit', 'exit']:
+                try:
+                    user_input = input("\nYou: ")
+                except EOFError:
+                    break
+                if user_input.lower() in ['quit', 'exit', 'bye']:
                     break
 
-                messages.append({"role": "user", "content": user_input})
+                messages.append({"role": "user", "content": user_input,})
 
                 # Call Ollama with the available tools
                 response = ollama.chat(
@@ -69,8 +72,13 @@ async def run_mcp_client():
                         # Execute the tool on the MCP server
                         mcp_result = await session.call_tool(func_name, func_args)
                         
-                        # Extract the text content from the MCP result
-                        result_text = mcp_result.content[0].text if mcp_result.content else "No output"
+                        # Extract text content safely (content can include non-text items)
+                        if mcp_result.content:
+                            first_item = mcp_result.content[0]
+                            text_value = getattr(first_item, "text", None)
+                            result_text = text_value if isinstance(text_value, str) else str(first_item)
+                        else:
+                            result_text = "No output"
                         print(f"  [Tool output: {result_text}]")
 
                         # Append the tool result back to the messages so Ollama knows the outcome

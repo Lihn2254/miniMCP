@@ -22,6 +22,17 @@ def read_item(item_id: str) -> str:
     return f"Item '{item_id}': {database[item_id]}"
 
 @mcp.tool()
+def read_multiple_items(items_id: list[str]) -> str:
+    """Read multiple items from the database at once."""
+    results = []
+    for item_id in items_id:
+        if item_id not in database:
+            results.append(f"Error: Item '{item_id}' not found.")
+        else:
+            results.append(f"Item '{item_id}': {database[item_id]}")
+    return "\n".join(results)
+
+@mcp.tool()
 def update_item(item_id: str, new_content: str) -> str:
     """Update an existing item in the database."""
     if item_id not in database:
