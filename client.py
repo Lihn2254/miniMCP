@@ -24,6 +24,9 @@ async def run_mcp_client():
 
             # Obtener herramientas (tools) disponibles en el MCP Server
             mcp_tools = await session.list_tools()
+            # Imprime la respuesta JSON-RPC de list_tools
+            # print("\n--- RAW MCP TOOLS RESPONSE ---")
+            # print(mcp_tools.model_dump_json(indent=2))
             
             # Convertir esquema de herramientas de un formato MCP a Ollama
             ollama_tools = []
@@ -71,7 +74,7 @@ async def run_mcp_client():
                     tools=ollama_tools
                 )
 
-                # Agregar respuesta del model al historial de conversación
+                # Agregar respuesta del modelo al historial de conversación
                 messages.append(response['message'])
 
                 # Manejar llamadas a herramientas si el modelo requiere de su uso
@@ -84,7 +87,7 @@ async def run_mcp_client():
                         
                         # Ejecutar la herramienta
                         mcp_result = await session.call_tool(func_name, func_args)
-                        
+
                         # Extraer contenido de texto
                         if mcp_result.content:
                             first_item = mcp_result.content[0]
