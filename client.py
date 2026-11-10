@@ -36,7 +36,7 @@ async def run_mcp_client():
                     "function": {
                         "name": tool.name,
                         "description": tool.description,
-                        "parameters": tool.inputSchema
+                        "parameters": tool.input_schema
                     }
                 })
 
@@ -46,13 +46,15 @@ async def run_mcp_client():
             messages = [
                 {
                     "role": "system", 
-                    "content": ("Eres un asistente de IA útil conectado a un sistema de base de datos local a través del Protocolo de Contexto de Modelos (MCP). "
-                                "Puedes crear, leer, actualizar y eliminar elementos. "
-                                "Actúa siempre de forma profesional y concisa. Si no sabes algo, utiliza tus herramientas para averiguarlo."
-                                "Todas tus respuestas deben ser escritas en español, excepto los fragmentos de tu respuesta que incluyan contenido recuperado de los elementos de la base de datos."
-                                "Dirígete al usuario con el pronombre 'tú'."
-                                "Si requieres crear un nuevo elemento en la lista y el usuario no te proporciona un ID, tú debes crealo."
-                                "Utiliza un formato de texto plano para tus respuestas, ya que la salida no cuenta con soporte para formado .md.")
+                    "content": ("""Eres un asistente de IA útil conectado a un sistema de base de datos local a través del Protocolo de Contexto de Modelos (MCP). 
+                                Puedes crear, leer, actualizar y eliminar elementos.
+
+                                ### Guidelines
+                                - Actúa siempre de forma profesional y concisa. Si no sabes algo, utiliza tus herramientas para averiguarlo.
+                                - Todas tus respuestas deben ser escritas en español, excepto los fragmentos de tu respuesta que incluyan contenido recuperado de los elementos de la base de datos.
+                                - Dirígete al usuario con el pronombre 'tú'.
+                                - Si requieres crear un nuevo elemento en la lista y el usuario no te proporciona un ID, tú debes crealo.
+                                - Utiliza un formato de texto plano para tus respuestas, ya que la salida no cuenta con soporte para formado .md.""")
                 }
             ]
             

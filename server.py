@@ -1,7 +1,7 @@
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 # Inicializar MCP Server
-mcp = FastMCP("CRUD_Demo_Server")
+mcp = MCPServer("CRUD_Demo_Server")
 
 # Base de datos simple en memoria
 database = {}
@@ -30,6 +30,14 @@ def read_multiple_items(items_id: list[str]) -> str:
             results.append(f"Error: Item '{item_id}' not found.")
         else:
             results.append(f"Item '{item_id}': {database[item_id]}")
+    return "\n".join(results)
+
+@mcp.tool()
+def read_all_items() -> str:
+    """Read all items from the database at once."""
+    results = []
+    for item_id, item_desc in database.items():
+        results.append(f"Item '{item_id}': {item_desc}")
     return "\n".join(results)
 
 @mcp.tool()
