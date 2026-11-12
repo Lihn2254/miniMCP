@@ -10,10 +10,11 @@ En este proyecto, la IA actúa como un asistente de bases de datos que puede con
   * Crear elementos (`create_item`)
   * Leer elementos individuales (`read_item`)
   * Leer múltiples elementos a la vez (`read_multiple_items`)
+  * Leer todos los elementos (`read_all_items`)
   * Actualizar elementos (`update_item`)
   * Eliminar elementos (`delete_item`)
 
-* **`client.py`**: Es el cliente que interactúa mediante la terminal. Se conecta al servidor MCP a través de los flujos de entrada/salida estándar (`stdio`), lee las herramientas disponibles y establece un ciclo de chat con el usuario y el LLM de Ollama (`gemma4:e4b`).
+* **`stdio_client.py`** / **`http_client.py`**: Son los clientes que interactúan mediante la terminal. El primero se conecta al servidor MCP a través de los flujos de entrada/salida estándar (`stdio`) y el segundo a través de HTTP (`streamable-http`). Ambos leen las herramientas disponibles y establece un ciclo de chat con el usuario y el LLM de Ollama.
 
 * **`requirements.txt`**: Archivo con las dependencias principales del proyecto.
 
@@ -52,11 +53,22 @@ Antes de iniciar el proyecto, asegúrate de tener instalado:
 
 ## Uso
 
-El proyecto consta de la configuración Cliente/Servidor, pero el cliente se encarga de lanzar el servidor por sí mismo, así que solo necesitas ejecutar el cliente:
+Hay dos clientes, según el transporte MCP que quieras usar.
+
+**stdio** (el cliente lanza el servidor por sí mismo):
 ```bash
-python client.py
+python stdio_client.py
 ```
-*Escribe tus preguntas directamente en la consola.*
+
+**HTTP** (streamable HTTP; el servidor corre por separado):
+```bash
+# Terminal 1: servidor en http://127.0.0.1:8000/mcp
+python server.py
+
+# Terminal 2: cliente
+python http_client.py
+```
+*Escribe tus preguntas al modelo directamente en la consola.*
 
 ---
 

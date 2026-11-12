@@ -1,36 +1,35 @@
 import asyncio
-import sys
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+import sys, os
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 import ollama
+from dotenv import load_dotenv
 
-# Configuración
-MODEL_NAME = "gemma4:e4b"
-SERVER_SCRIPT = "server.py"
+load_dotenv()
+
+MODEL_NAME = os.environ.get(key="MODEL_NAME", default="gemma4:e4b")
+SERVER_URL = os.environ.get(key="SERVER_URL", default="http://127.0.0.1:8000/mcp")
 
 async def run_mcp_client():
-    # Parametros de conexión al servidor
-    server_params = StdioServerParameters(
-        command=sys.executable, # Python interpreter
-        args=[SERVER_SCRIPT]
-    )
-
-    # Conectar con el servidor
-    async with stdio_client(server_params) as (read, write):
+    async with streamable_http_client(SERVER_URL) as streams:
+        read, write = streams[0], streams[1]
         async with ClientSession(read, write) as session:
-            # Inicializar sesión
             await session.initialize()
-            print("Conectado al Servidor MCP.")
+            print(
+                """
+                Conectado al Servidor MCP.
+                    URL: {SERVER_URL}
+                    MODELO: {MODEL_NAME}
+                """)
 
-            # Obtener herramientas (tools) disponibles en el MCP Server
             mcp_tools = await session.list_tools()
             # Imprime la respuesta JSON-RPC de list_tools
             # print("\n--- RAW MCP TOOLS RESPONSE ---")
             # print(mcp_tools.model_dump_json(indent=2))
             
-            # Convertir esquema de herramientas de un formato MCP a Ollama
             ollama_tools = []
             for tool in mcp_tools.tools:
+                print(f"Cargando herramienta {tool.name}...")
                 ollama_tools.append({
                     "type": "function",
                     "function": {
@@ -42,7 +41,6 @@ async def run_mcp_client():
 
             print(f"Cargadas {len(ollama_tools)} herramientas del servidor. Iniciando chat...")
             
-            # Mensaje inicial para dar contexto al modelo
             messages = [
                 {
                     "role": "system", 
@@ -58,10 +56,9 @@ async def run_mcp_client():
                 }
             ]
             
-            # Ciclo del chat
             while True:
                 try:
-                    user_input = input("\nTú: ")
+                    user_input = input("\nTú > ")
                 except EOFError:
                     break
                 if user_input.lower() in ['quit', 'exit', 'salir']:
@@ -69,17 +66,14 @@ async def run_mcp_client():
 
                 messages.append({"role": "user", "content": user_input,})
 
-                # Llamar a ollama con las herramientas disponibles
                 response = ollama.chat(
                     model=MODEL_NAME,
                     messages=messages,
                     tools=ollama_tools
                 )
 
-                # Agregar respuesta del modelo al historial de conversación
                 messages.append(response['message'])
 
-                # Manejar llamadas a herramientas si el modelo requiere de su uso
                 if response['message'].get('tool_calls'):
                     for tool_call in response['message']['tool_calls']:
                         func_name = tool_call['function']['name']
@@ -87,10 +81,8 @@ async def run_mcp_client():
                         
                         print(f"  [IA ejecutando herramienta: {func_name}({func_args})]")
                         
-                        # Ejecutar la herramienta
                         mcp_result = await session.call_tool(func_name, func_args)
 
-                        # Extraer contenido de texto
                         if mcp_result.content:
                             first_item = mcp_result.content[0]
                             text_value = getattr(first_item, "text", None)
@@ -99,24 +91,21 @@ async def run_mcp_client():
                             result_text = "Sin respuesta"
                         print(f"  [Respuesta de la herramienta: {result_text}]")
 
-                        # Agregar el resultado de la herramientas a los mensajes
-                        # para que Ollama conozca el resultado
                         messages.append({
                             "role": "tool",
                             "content": result_text,
                             "name": func_name
                         })
 
-                    # Llamar a Ollama de nuevo para resumir el resultado de la herramienta
                     final_response = ollama.chat(
                         model=MODEL_NAME,
                         messages=messages
                     )
+
                     messages.append(final_response['message'])
-                    print(f"\nGemma4: {final_response['message']['content']}")
+                    print(f"\nGemma4 > {final_response['message']['content']}")
                 else:
-                    # Respuesta normal de texto sin uso de herramientas
-                    print(f"\nGemma4: {response['message']['content']}")
+                    print(f"\nGemma4 > {response['message']['content']}")
 
 if __name__ == "__main__":
     asyncio.run(run_mcp_client())

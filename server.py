@@ -1,9 +1,7 @@
 from mcp.server.mcpserver import MCPServer
 
-# Inicializar MCP Server
 mcp = MCPServer("CRUD_Demo_Server")
 
-# Base de datos simple en memoria
 database = {}
 
 @mcp.tool()
@@ -57,4 +55,16 @@ def delete_item(item_id: str) -> str:
     return f"Success: Deleted item '{item_id}'."
 
 if __name__ == "__main__":
-    mcp.run()
+    import os
+
+    SERVER_TRANSPORT = os.environ.get(key="SERVER_TRANSPORT", default="http")
+    SERVER_HOST = os.environ.get(key="SERVER_HOST", default="127.0.0.1")
+    SERVER_PORT = int(os.environ.get(key="SERVER_PORT", default="8000"))
+
+    if SERVER_TRANSPORT not in ["http", "stdio"]:
+        raise Exception('El valor de SERVER_TRANSPORT debe ser "http" o "stdio"')
+
+    if SERVER_TRANSPORT == "http":
+        mcp.run(transport="streamable-http", host=SERVER_HOST, port=SERVER_PORT)
+    else:
+        mcp.run()
