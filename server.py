@@ -1,8 +1,8 @@
 from mcp.server.mcpserver import MCPServer
 import json
-import subprocess
 import threading
 from pathlib import Path
+from datetime import datetime
 
 mcp = MCPServer("CRUD_Demo_Server")
 
@@ -21,7 +21,7 @@ def _load_items() -> dict[str, str]:
     for entry in data:
         if not isinstance(entry, dict):
             raise ValueError(
-                f"Invalid items.json: expected objects like {{\"1\": \"Description\"}}, got {entry!r}"
+                f'Invalid items.json: expected objects like {{"1": "Description"}}, got {entry!r}'
             )
         for key, value in entry.items():
             items[str(key)] = value
@@ -45,6 +45,7 @@ def create_item(item_id: str, content: str) -> str:
         _save_items(items)
     return f"Success: Created item '{item_id}'."
 
+
 @mcp.tool()
 def read_item(item_id: str) -> str:
     """Read an item from items.json."""
@@ -52,6 +53,7 @@ def read_item(item_id: str) -> str:
     if item_id not in items:
         return f"Error: Item '{item_id}' not found."
     return f"Item '{item_id}': {items[item_id]}"
+
 
 @mcp.tool()
 def read_multiple_items(items_id: list[str]) -> str:
@@ -65,11 +67,13 @@ def read_multiple_items(items_id: list[str]) -> str:
             results.append(f"Item '{item_id}': {items[item_id]}")
     return "\n".join(results)
 
+
 @mcp.tool()
 def read_all_items() -> str:
     """Read all items from items.json at once."""
     items = _load_items()
     return "\n".join(f"Item '{k}': {v}" for k, v in items.items())
+
 
 @mcp.tool()
 def update_item(item_id: str, new_content: str) -> str:
@@ -81,6 +85,7 @@ def update_item(item_id: str, new_content: str) -> str:
         items[item_id] = new_content
         _save_items(items)
     return f"Success: Updated item '{item_id}'."
+
 
 @mcp.tool()
 def delete_item(item_id: str) -> str:
@@ -94,20 +99,10 @@ def delete_item(item_id: str) -> str:
     return f"Success: Deleted item '{item_id}'."
 
 @mcp.tool()
-def run_shell_command(args: str):
-    """Execute a shell command on Windows"""
-    try:
-        result = subprocess.run(
-            args,
-            shell=True,
-            capture_output=True,
-            text=True,
-            check=True
-        )
+def get_local_datetime() -> str:
+    """Get the current datetime in the server's timezone"""
+    return datetime.now().isoformat()
 
-        return result.stdout
-    except Exception as err:
-        return err
 
 if __name__ == "__main__":
     import os

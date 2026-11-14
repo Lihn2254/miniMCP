@@ -1,11 +1,15 @@
 import asyncio
+import os
 import sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 import ollama
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configuración
-MODEL_NAME = "gemma4:e4b"
+MODEL_NAME = os.environ.get(key="MODEL_NAME", default="gemma4:e4b")
 SERVER_SCRIPT = "server.py"
 
 async def run_mcp_client():
