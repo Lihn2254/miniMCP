@@ -1,5 +1,6 @@
+from ast import arg
 import asyncio
-import os
+import os, subprocess
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 import ollama
@@ -9,7 +10,9 @@ load_dotenv()
 
 MODEL_NAME = os.environ.get(key="MODEL_NAME", default="gemma4:e4b")
 SERVER_URL = os.environ.get(key="SERVER_URL", default="http://127.0.0.1:8000/mcp")
-NUM_CTX = int(os.environ.get(key="NUM_CTX", default="8192")) * 2
+NUM_CTX = int(os.environ.get(key="NUM_CTX", default="16384"))
+AUTO_START_OLLAMA = bool(os.environ.get(key="AUTO_START_OLLAMA", default="False") == "True")
+
 MAX_TOOL_ROUNDS = 8
 
 SYSTEM_PROMPT = {
@@ -30,111 +33,145 @@ SYSTEM_PROMPT = {
                 }
 
 async def run_mcp_client():
-    async with streamable_http_client(SERVER_URL) as streams:
-        read, write = streams[0], streams[1]
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            print(
-                f"Conectado al Servidor MCP.\n\tURL: {SERVER_URL}\n\tMODELO: {MODEL_NAME}"
-            )
+    try:
+        print()
+        if AUTO_START_OLLAMA:
+            print("Cargando Ollama...")
+            ollama_process = start_ollama()
+            print(f"Ollama cargado [MODELO: {MODEL_NAME}]\n")
 
-            mcp_tools = await session.list_tools()
-            # Imprime la respuesta JSON-RPC de list_tools
-            # print("\n--- RAW MCP TOOLS RESPONSE ---")
-            # print(mcp_tools.model_dump_json(indent=2))
-
-            ollama_tools = []
-            for tool in mcp_tools.tools:
-                print(f"Cargando herramienta {tool.name}...")
-                ollama_tools.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.input_schema,
-                        },
-                    }
+        async with streamable_http_client(SERVER_URL) as streams:
+            read, write = streams[0], streams[1]
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                print(
+                    f"Conectado al Servidor MCP.\n\tURL: {SERVER_URL}"
                 )
 
-            print(
-                f"Cargadas {len(ollama_tools)} herramientas del servidor. Iniciando chat..."
-            )
+                mcp_tools = await session.list_tools()
+                # Imprime la respuesta JSON-RPC de list_tools
+                # print("\n--- RAW MCP TOOLS RESPONSE ---")
+                # print(mcp_tools.model_dump_json(indent=2))
 
-            messages = [SYSTEM_PROMPT]
-
-            model_common_name = get_model_common_name()
-
-            while True:
-                try:
-                    user_input = input("\nTú > ")
-                except EOFError:
-                    break
-
-                if user_input.lower() in ["quit", "exit", "salir"]:
-                    break
-                elif user_input.lower() == '/clear':
-                    messages = [SYSTEM_PROMPT]
-                    print('     Memoria de la conversación eliminada')
-                    continue
-
-                messages.append({"role": "user", "content": user_input})
-
-                message = None
-                for _ in range(MAX_TOOL_ROUNDS):
-                    response = ollama.chat(
-                        model=MODEL_NAME,
-                        messages=messages,
-                        tools=ollama_tools,
-                        think=True,
-                        options={"num_ctx": NUM_CTX},
+                ollama_tools = []
+                for tool in mcp_tools.tools:
+                    print(f"Cargando herramienta {tool.name}...")
+                    ollama_tools.append(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": tool.name,
+                                "description": tool.description,
+                                "parameters": tool.input_schema,
+                            },
+                        }
                     )
-                    message = response["message"]
-                    messages.append(message)
 
-                    if not message.get("tool_calls"):
+                print(
+                    f"Cargadas {len(ollama_tools)} herramientas del servidor. Iniciando chat..."
+                )
+
+                messages = [SYSTEM_PROMPT]
+
+                model_common_name = get_model_common_name()
+
+                while True:
+                    try:
+                        user_input = input("\nTú > ")
+                    except EOFError:
                         break
 
-                    for tool_call in message["tool_calls"]:
-                        func_name = tool_call["function"]["name"]
-                        func_args = tool_call["function"]["arguments"]
+                    if user_input.lower() in ["quit", "exit", "salir"]:
+                        break
+                    elif user_input.lower() == '/clear':
+                        messages = [SYSTEM_PROMPT]
+                        print('     Memoria de la conversación eliminada')
+                        continue
 
-                        print(
-                            f"  [IA ejecutando herramienta: {func_name}({func_args})]"
+                    messages.append({"role": "user", "content": user_input})
+
+                    message = None
+                    for _ in range(MAX_TOOL_ROUNDS):
+                        response = ollama.chat(
+                            model=MODEL_NAME,
+                            messages=messages,
+                            tools=ollama_tools,
+                            think=True,
+                            options={"num_ctx": NUM_CTX},
                         )
+                        message = response["message"]
+                        messages.append(message)
 
-                        mcp_result = await session.call_tool(func_name, func_args)
+                        if not message.get("tool_calls"):
+                            break
 
-                        if mcp_result.content:
-                            first_item = mcp_result.content[0]
-                            text_value = getattr(first_item, "text", None)
-                            result_text = (
-                                text_value
-                                if isinstance(text_value, str)
-                                else str(first_item)
+                        for tool_call in message["tool_calls"]:
+                            func_name = tool_call["function"]["name"]
+                            func_args = tool_call["function"]["arguments"]
+
+                            print(
+                                f"  [IA ejecutando herramienta: {func_name}({func_args})]"
                             )
-                        else:
-                            result_text = ""
-                        if not result_text.strip():
-                            result_text = "Sin resultados"
-                        if mcp_result.is_error:
-                            result_text = f"Error: {result_text}"
-                        print(f"  [Respuesta de la herramienta: {result_text}]")
 
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "content": result_text,
-                                "tool_name": func_name,
-                            }
-                        )
+                            mcp_result = await session.call_tool(func_name, func_args)
 
-                reply = (message or {}).get("content") or "(sin respuesta)"
-                print(f"\n{model_common_name} > {reply}")
+                            if mcp_result.content:
+                                first_item = mcp_result.content[0]
+                                text_value = getattr(first_item, "text", None)
+                                result_text = (
+                                    text_value
+                                    if isinstance(text_value, str)
+                                    else str(first_item)
+                                )
+                            else:
+                                result_text = ""
+                            if not result_text.strip():
+                                result_text = "Sin resultados"
+                            if mcp_result.is_error:
+                                result_text = f"Error: {result_text}"
+                            print(f"  [Respuesta de la herramienta: {result_text}]")
+
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "content": result_text,
+                                    "tool_name": func_name,
+                                }
+                            )
+
+                    reply = (message or {}).get("content") or "(sin respuesta)"
+                    print(f"\n{model_common_name} > {reply}")
+    except ConnectionError as err:
+        print(err.strerror)
+    except Exception as err:
+        print(f"Ocurrió un error inesperado.")
+    finally:
+        if AUTO_START_OLLAMA: stop_ollama(ollama_process)
 
 
 def get_model_common_name():
     return MODEL_NAME.split(":")[0].capitalize()
+
+def start_ollama():
+    try:
+        return subprocess.Popen(
+            args=["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as err:
+        print("[ERROR] Failed to start Ollama server")
+        raise err
+
+
+def stop_ollama(process):
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 if __name__ == "__main__":
     asyncio.run(run_mcp_client())
