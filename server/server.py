@@ -5,7 +5,8 @@ import threading
 from datetime import datetime
 
 
-from server.helpers import _load_albums, _save_album, run_soloist_ctl_command
+from server.helpers import _load_albums, _save_album
+from server.helpers import start_soloist as _start_soloist
 from server.schemas import Album
 
 mcp = MCPServer("MCPlayer_Server")
@@ -70,7 +71,7 @@ def start_soloist() -> str:
         if _soloist_proc is not None and _soloist_proc.poll() is None:
             return f"Soloist is already running (pid {_soloist_proc.pid})."
 
-        proc, message = run_soloist_ctl_command(["--ws", "127.0.0.1:0"])
+        proc, message = _start_soloist()
         if proc is not None:
             _soloist_proc = proc
         return message
