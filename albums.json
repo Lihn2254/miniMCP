@@ -1,0 +1,41 @@
+[
+  {
+    "name": "For Lovers",
+    "artist": "Lamp",
+    "uri": "spotify:album:0gwS2D9sukMLXNvleEnYr2",
+    "tracks": [
+      {
+        "name": "For Lovers",
+        "uri": "spotify:track:6BGNjTZ8zp9MlsIydBa7A9"
+      },
+      {
+        "name": "HIROGARU-NAMIDA",
+        "uri": "spotify:track:3rv9CRv3T4sz3u4JMooWY4"
+      },
+      {
+        "name": "Last Train AT 25 O'clock",
+        "uri": "spotify:track:3VPBPBZKxQu3bqeuzz8gRm"
+      },
+      {
+        "name": "Out On Sunny Sunday",
+        "uri": "spotify:track:5kHY8kuNjh6UOIikdrWHPX"
+      },
+      {
+        "name": "Tomorrow Comes I Will",
+        "uri": "spotify:track:1Tii3aXrNzb8IDXs6cxfZz"
+      },
+      {
+        "name": "Rainy Tapestry",
+        "uri": "spotify:track:3INsIMe6Ap6EJ2xXgt9NB8"
+      },
+      {
+        "name": "Words Of Love",
+        "uri": "spotify:track:43aPkZFUMzcdIJyKbBA2AG"
+      },
+      {
+        "name": "Behind The Moon Shadow",
+        "uri": "spotify:track:77zsHdb523rUQnOYUSG3qb"
+      }
+    ]
+  }
+]
