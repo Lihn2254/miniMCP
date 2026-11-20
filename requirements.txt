@@ -1,6 +1,5 @@
-mcp[cli]
+mcp[cli]>=2
 ollama
-dotenv
 pydantic
 pydantic_settings
 psutil

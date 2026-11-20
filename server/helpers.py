@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
 
 
@@ -60,11 +61,8 @@ def start_soloist() -> tuple[subprocess.Popen | None, str]:
     which case `message` describes the error; otherwise `message` is a success
     message.
     """
-    api_key = os.environ.get("SOLOIST_API_KEY")
-    if not api_key:
-        return None, "Error: SOLOIST_API_KEY is not set."
-
     settings = get_settings()
+    api_key = settings.SOLOIST_API_KEY
     soloist_log = settings.SOLOIST_LOG
 
     log = soloist_log.open("wb")
@@ -106,31 +104,34 @@ def start_soloist() -> tuple[subprocess.Popen | None, str]:
 
 def _load_albums() -> list[Album]:
     """Load the albums file (a JSON list of album objects) into a list of
-    `Album` models. Entries that fail validation are skipped."""
+    `Album` models.
+
+    Raises `ToolError` (so the message reaches the client as an MCP `isError`
+    result; any other exception is reduced to a generic message) if the file is malformed or any entry is invalid. Invalid
+    entries are never skipped: every write rewrites the whole file, so skipping
+    them would silently delete them from disk.
+    """
 
     if not music_file.exists():
         return []
     with music_file.open("r", encoding="utf-8") as f:
         content = f.read().strip()
-    data = json.loads(content) if content else []
+    try:
+        data = json.loads(content) if content else []
+    except json.JSONDecodeError as err:
+        raise ToolError(f"Invalid music file [{music_file}]: not valid JSON ({err})") from err
+    if not isinstance(data, list):
+        raise ToolError(f"Invalid music file [{music_file}]: expected a JSON list of albums.")
+
     albums: list[Album] = []
-    for entry in data:
-        if not isinstance(entry, dict):
-            print(entry)
-            raise ValueError(
-                f"Invalid music file [{music_file}]: expected objects {Album.model_json_schema()} like, got {entry!r}"
-            )
+    for index, entry in enumerate(data):
         try:
-            albums.append(
-                Album(
-                    name=entry["name"],
-                    artist=entry["artist"],
-                    uri=entry["uri"],
-                    tracks=entry["tracks"],
-                )
-            )
+            albums.append(Album.model_validate(entry))
         except ValidationError as err:
-            print(f"Validation error for item {entry}: {err}")
+            raise ToolError(
+                f"Invalid music file [{music_file}]: entry #{index} is not a valid album "
+                f"({err.error_count()} error(s)): {err}. Fix the file manually; nothing was modified."
+            )
     return albums
 
 

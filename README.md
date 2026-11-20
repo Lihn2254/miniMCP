@@ -7,10 +7,10 @@ The AI acts as a music assistant. It can manage a small album and track library 
 ## Project Structure
 
 * **`server/server.py`**: The MCP server, built with `MCPServer`. It exposes the following tools:
-  * **Albums**: `register_album`, `get_album_by_name`, `get_album_by_uri`, `update_album`, `delete_album`
+  * **Albums**: `register_album`, `get_album_by_name`, `get_album_by_uri`, `get_all_albums`, `update_album`, `delete_album`
   * **Tracks**: `register_track`, `get_track_by_name`, `get_track_by_uri`, `update_track`, `delete_track`
   * **Soloist process**: `start_soloist`, `stop_soloist`, `activate_soloist`, `get_status`
-  * **Playback**: `manage_playback` (`play`, `pause`, `next`, `prev`, `seek`), `set_volume`, `set_shuffle`, `set_repeat`, `get_now_playing`, `get_queue`
+  * **Playback**: `manage_playback` (`play`, `pause`, `next`, `prev`, `seek`), `set_volume`, `set_shuffle`, `set_repeat`, `get_now_playing`, `get_queue`, `add_to_queue`
   * **Utilities**: `get_local_datetime`
 
 * **`server/helpers.py`**: Helpers for reading and writing the album file and for running Soloist commands.
@@ -34,7 +34,7 @@ Before starting, make sure you have:
    ```bash
    ollama run gemma4:e4b
    ```
-4. **Soloist** available in your `PATH`, and a `SOLOIST_API_KEY` environment variable, if you want to use the playback tools. Stopping the server does not stop Soloist: when the server starts, it looks for a Soloist that is already running and takes control of it, so music keeps playing across server restarts. Use the `stop_soloist` tool to stop it.
+4. **Soloist** available in your `PATH`, and a `SOLOIST_API_KEY` (set in `.env` or the environment; the server requires it to start). Stopping the server does not stop Soloist: when the server starts, it looks for a Soloist that is already running and takes control of it, so music keeps playing across server restarts. Use the `stop_soloist` tool to stop it.
 
 ## Installation
 
@@ -69,12 +69,23 @@ Settings are read from environment variables or from the `.env` file in the proj
 | `SERVER_TRANSPORT` | server | `http` or `stdio` | `http` |
 | `SERVER_HOST` | server | Host to bind to when using HTTP | `127.0.0.1` |
 | `SERVER_PORT` | server | Port to bind to when using HTTP | `8000` |
+| `SERVER_PATH` | server | Route of the MCP endpoint when using HTTP (normalized: `mcp/` becomes `/mcp`) | `/mcp` |
 | `MUSIC_FILE` | server | Album library file (relative paths are resolved against `server/`) | `server/albums.json` |
-| `SOLOIST_API_KEY` | server | API key used to start Soloist | none (required for playback) |
-| `SERVER_URL` | HTTP client | URL of the MCP server | `http://127.0.0.1:8000/mcp` |
+| `SOLOIST_API_KEY` | server | API key used to start Soloist | none (**required**; the server will not start without it) |
+| `SERVER_URL` | HTTP client | URL of the MCP server. Must match `SERVER_HOST`, `SERVER_PORT` and `SERVER_PATH` | `http://127.0.0.1:8000/mcp` |
 | `MODEL_NAME` | clients | Ollama model to use | `gemma4:e4b` |
+| `LLM_BASE_URL` | HTTP client | URL of the Ollama server | `http://127.0.0.1:11434` |
 | `NUM_CTX` | HTTP client | Context window size | `16384` |
-| `AUTO_START_OLLAMA` | HTTP client | Start Ollama automatically (`True`/`False`) | `False` |
+| `AUTO_START_OLLAMA` | HTTP client | Start Ollama automatically (`True`/`False`); only applies if `LLM_BASE_URL` is local | `False` |
+
+The HTTP client prints the model and the LLM URL at startup, and the MCP server URL once connected.
+
+## Validation
+
+* Albums and tracks are validated by the Pydantic models: `name` and `artist` cannot be empty, and URIs must start with `spotify:album:` / `spotify:track:`.
+* Albums with a duplicate URI or name are rejected.
+* Tool parameters are described in the generated schemas, and numeric ones are bounded (`volume` 0-100, `get_queue` `limit` 1-50, `seek` `ms` >= 0).
+* If `albums.json` contains an invalid entry, the tools report an error instead of skipping it, so no data is silently lost.
 
 ## Usage
 

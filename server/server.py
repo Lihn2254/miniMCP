@@ -1,15 +1,17 @@
 import json, os, sys
-from typing import Literal
+from typing import Annotated, Literal
 
 import psutil
+from pydantic import Field
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 import threading
 from datetime import datetime
 
-
-from helpers import _load_albums, _save_album, _write_albums, run_soloist_ctl_command
+from helpers import _load_albums, _write_albums, run_soloist_ctl_command
 from helpers import start_soloist as _start_soloist
-from schemas import Album, Track
+from schemas import Album, AlbumUri, NonEmptyStr, Track, TrackUri
+from config import get_settings
 
 SERVER_INSTRUCTIONS = """\
 This server manages a local library of albums and tracks and controls playback through Soloist, a Spotify CLI player.
@@ -27,7 +29,7 @@ This server manages a local library of albums and tracks and controls playback t
 - Playing without a URI resumes the current playback. Pause, next, previous and seek (position in milliseconds) do not need a URI.
 - Volume is an integer between 0 and 100.
 - Shuffle is turned on or off. Repeat mode is 'off', 'context' (repeats the current album or playlist) or 'track' (repeats the current track).
-- Use the now-playing tool to see what is playing, and the queue tool to see upcoming tracks (10 by default; the user may ask for any positive number).
+- Use the now-playing tool to see what is playing, and the queue tool to see upcoming tracks (10 by default; the user may ask for any number from 1 to 50).
 - If something fails and the reason is unclear, check the Soloist status (session, login and active device).
 """
 
@@ -91,27 +93,42 @@ def _terminate_soloist(proc: psutil.Process) -> None:
         pass  # it exited on its own in the meantime
 
 
-def _run_ctl_if_running(args: list[str]) -> tuple[bool, str]:
+def _run_ctl_if_running(args: list[str]) -> str:
     """Run a soloist ctl command while holding the lock.
 
-    Returns `(ok, output)`. When `ok` is False, `output` is a ready-to-return
-    error message; otherwise it is the command's output.
+    Returns the command's output. Raises `ToolError` (reported to the client as
+    an MCP `isError` result) if Soloist is not running or the command fails.
     """
     global _soloist_proc
 
     with _lock:
         if not _is_alive(_soloist_proc):
             _soloist_proc = None
-            return False, "Soloist is not running."
+            raise ToolError("Soloist is not running.")
 
         return_code, output = run_soloist_ctl_command(args)
 
     if return_code != 0:
-        return False, f"Command failed with exit code {return_code}. Output: {output}"
-    return True, output
+        raise ToolError(f"Command failed with exit code {return_code}. Output: {output}")
+    return output
 
 
-TRACK_URI_PREFIX = "spotify:track:"
+MAX_QUEUE_LIMIT = 50
+
+# Reusable parameter types with descriptions, so the generated tool schemas are
+# self-explanatory for the LLM.
+AlbumUriParam = Annotated[
+    AlbumUri, Field(description="Spotify URI of the album, e.g. 'spotify:album:<id>'")
+]
+TrackUriParam = Annotated[
+    TrackUri, Field(description="Spotify URI of the track, e.g. 'spotify:track:<id>'")
+]
+SpotifyUriParam = Annotated[
+    str,
+    Field(
+        description="Any Spotify URI (track, album, playlist...), starting with 'spotify:'"
+    ),
+]
 
 
 def _find_album(albums: list[Album], uri: str) -> Album | None:
@@ -141,18 +158,20 @@ def _find_tracks(albums: list[Album], matches) -> str:
 @mcp.tool(
     description="Add a track to an existing album, identified by the album's URI"
 )
-def register_track(track: Track, album_uri: str) -> str:
-    if not track.uri.startswith(TRACK_URI_PREFIX):
-        return f"Error: Track URI must start with '{TRACK_URI_PREFIX}'."
-
+def register_track(
+    track: Track,
+    album_uri: Annotated[
+        AlbumUri, Field(description="URI of the existing album the track is added to")
+    ],
+) -> str:
     with _lock:
         albums = _load_albums()
         album = _find_album(albums, album_uri)
         if album is None:
-            return f"Error: Album '{album_uri}' does not exist."
+            raise ToolError(f"Album '{album_uri}' does not exist.")
 
         if any(t.uri.lower() == track.uri.lower() for t in album.tracks):
-            return f"Error: Track '{track.uri}' already exists in album '{album.name}'."
+            raise ToolError(f"Track '{track.uri}' already exists in album '{album.name}'.")
 
         album.tracks.append(track)
         _write_albums(albums)
@@ -162,7 +181,11 @@ def register_track(track: Track, album_uri: str) -> str:
 @mcp.tool(
     description="Search tracks across all albums by a partial, case-insensitive name match. Returns every match along with its album."
 )
-def get_track_by_name(name: str) -> str:
+def get_track_by_name(
+    name: Annotated[
+        NonEmptyStr, Field(description="Full or partial track name to search for")
+    ],
+) -> str:
     with _lock:
         albums = _load_albums()
     return _find_tracks(albums, lambda t: name.lower() in t.name.lower())
@@ -171,7 +194,7 @@ def get_track_by_name(name: str) -> str:
 @mcp.tool(
     description="Search tracks across all albums by exact URI. Returns every match along with its album."
 )
-def get_track_by_uri(uri: str) -> str:
+def get_track_by_uri(uri: TrackUriParam) -> str:
     with _lock:
         albums = _load_albums()
     return _find_tracks(albums, lambda t: t.uri.lower() == uri.lower())
@@ -181,32 +204,38 @@ def get_track_by_uri(uri: str) -> str:
     description="Update the name and/or URI of a track inside an album. Provide at least one of new_name or new_uri."
 )
 def update_track(
-    album_uri: str,
-    track_uri: str,
-    new_name: str | None = None,
-    new_uri: str | None = None,
+    album_uri: Annotated[
+        AlbumUri, Field(description="URI of the album that contains the track")
+    ],
+    track_uri: Annotated[
+        TrackUri, Field(description="Current URI of the track to update")
+    ],
+    new_name: Annotated[
+        NonEmptyStr | None, Field(description="New name for the track")
+    ] = None,
+    new_uri: Annotated[
+        TrackUri | None, Field(description="New Spotify URI for the track")
+    ] = None,
 ) -> str:
     if new_name is None and new_uri is None:
-        return "Error: Provide at least one of 'new_name' or 'new_uri'."
-    if new_uri is not None and not new_uri.startswith(TRACK_URI_PREFIX):
-        return f"Error: Track URI must start with '{TRACK_URI_PREFIX}'."
+        raise ToolError("Provide at least one of 'new_name' or 'new_uri'.")
 
     with _lock:
         albums = _load_albums()
         album = _find_album(albums, album_uri)
         if album is None:
-            return f"Error: Album '{album_uri}' does not exist."
+            raise ToolError(f"Album '{album_uri}' does not exist.")
 
         track = next(
             (t for t in album.tracks if t.uri.lower() == track_uri.lower()), None
         )
         if track is None:
-            return f"Error: Track '{track_uri}' does not exist in album '{album.name}'."
+            raise ToolError(f"Track '{track_uri}' does not exist in album '{album.name}'.")
 
         if new_uri is not None and any(
             t is not track and t.uri.lower() == new_uri.lower() for t in album.tracks
         ):
-            return f"Error: Track '{new_uri}' already exists in album '{album.name}'."
+            raise ToolError(f"Track '{new_uri}' already exists in album '{album.name}'.")
 
         if new_name is not None:
             track.name = new_name
@@ -217,16 +246,21 @@ def update_track(
 
 
 @mcp.tool(description="Remove a track from an album")
-def delete_track(album_uri: str, track_uri: str) -> str:
+def delete_track(
+    album_uri: Annotated[
+        AlbumUri, Field(description="URI of the album that contains the track")
+    ],
+    track_uri: Annotated[TrackUri, Field(description="URI of the track to remove")],
+) -> str:
     with _lock:
         albums = _load_albums()
         album = _find_album(albums, album_uri)
         if album is None:
-            return f"Error: Album '{album_uri}' does not exist."
+            raise ToolError(f"Album '{album_uri}' does not exist.")
 
         remaining = [t for t in album.tracks if t.uri.lower() != track_uri.lower()]
         if len(remaining) == len(album.tracks):
-            return f"Error: Track '{track_uri}' does not exist in album '{album.name}'."
+            raise ToolError(f"Track '{track_uri}' does not exist in album '{album.name}'.")
 
         album.tracks = remaining
         _write_albums(albums)
@@ -237,20 +271,26 @@ def delete_track(album_uri: str, track_uri: str) -> str:
     description="Update the name and/or artist of an album, identified by its URI. Provide at least one of new_name or new_artist."
 )
 def update_album(
-    uri: str, new_name: str | None = None, new_artist: str | None = None
+    uri: Annotated[AlbumUri, Field(description="URI of the album to update")],
+    new_name: Annotated[
+        NonEmptyStr | None, Field(description="New name for the album")
+    ] = None,
+    new_artist: Annotated[
+        NonEmptyStr | None, Field(description="New artist for the album")
+    ] = None,
 ) -> str:
     if new_name is None and new_artist is None:
-        return "Error: Provide at least one of 'new_name' or 'new_artist'."
+        raise ToolError("Provide at least one of 'new_name' or 'new_artist'.")
 
     with _lock:
         albums = _load_albums()
         album = _find_album(albums, uri)
         if album is None:
-            return f"Error: Album '{uri}' does not exist."
+            raise ToolError(f"Album '{uri}' does not exist.")
 
         if new_name is not None:
             if any(a is not album and a.name == new_name for a in albums):
-                return f"Error: An album named '{new_name}' already exists."
+                raise ToolError(f"An album named '{new_name}' already exists.")
             album.name = new_name
         if new_artist is not None:
             album.artist = new_artist
@@ -259,12 +299,14 @@ def update_album(
 
 
 @mcp.tool(description="Delete an album, and all of its tracks, by its URI")
-def delete_album(uri: str) -> str:
+def delete_album(
+    uri: Annotated[AlbumUri, Field(description="URI of the album to delete")],
+) -> str:
     with _lock:
         albums = _load_albums()
         album = _find_album(albums, uri)
         if album is None:
-            return f"Error: Album '{uri}' does not exist."
+            raise ToolError(f"Album '{uri}' does not exist.")
 
         _write_albums([a for a in albums if a is not album])
     return f"Album '{album.name}' deleted."
@@ -274,17 +316,25 @@ def delete_album(uri: str) -> str:
 def register_album(album: Album) -> str:
     with _lock:
         albums = _load_albums()
-        for a in albums:
-            if album.name == a.name:
-                return f"Error: An album named '{album.name}' already exists."
-        _save_album(album)
+        if _find_album(albums, album.uri) is not None:
+            raise ToolError(f"An album with URI '{album.uri}' already exists.")
+        if any(album.name.lower() == a.name.lower() for a in albums):
+            raise ToolError(f"An album named '{album.name}' already exists.")
+        albums.append(album)
+        _write_albums(albums)
     return f"Album '{album.name}' created successfully."
 
 
 @mcp.tool(description="Find and read an album by a partial match on its name")
-def get_album_by_name(name: str, include_tracks: bool = True) -> str:
+def get_album_by_name(
+    name: Annotated[
+        NonEmptyStr, Field(description="Full or partial album name to search for")
+    ],
+    include_tracks: Annotated[
+        bool, Field(description="Whether to include the album's tracks in the result")
+    ] = True,
+) -> str:
     albums = _load_albums()
-    print(albums)
     for a in albums:
         if name.lower() in a.name.lower():
             if include_tracks:
@@ -296,7 +346,12 @@ def get_album_by_name(name: str, include_tracks: bool = True) -> str:
 
 
 @mcp.tool(description="Find and read an album by an exact match on its URI")
-def get_album_by_uri(uri: str, include_tracks: bool = True) -> str:
+def get_album_by_uri(
+    uri: AlbumUriParam,
+    include_tracks: Annotated[
+        bool, Field(description="Whether to include the album's tracks in the result")
+    ] = True,
+) -> str:
     albums = _load_albums()
     for a in albums:
         if uri.lower() == a.uri.lower():
@@ -308,7 +363,11 @@ def get_album_by_uri(uri: str, include_tracks: bool = True) -> str:
     return "The album could not be found."
 
 @mcp.tool(description="Retrieve all registered albums")
-def get_all_albums(include_tracks: bool = False) -> str:
+def get_all_albums(
+    include_tracks: Annotated[
+        bool, Field(description="Whether to include each album's tracks in the result")
+    ] = False,
+) -> str:
     albums = _load_albums()
 
     if len(albums) <= 0:
@@ -337,8 +396,9 @@ def start_soloist() -> str:
             return f"Soloist is already running (pid {existing.pid})."
 
         proc, message = _start_soloist()
-        if proc is not None:
-            _soloist_proc = psutil.Process(proc.pid)
+        if proc is None:
+            raise ToolError(message)
+        _soloist_proc = psutil.Process(proc.pid)
         return message
 
 
@@ -349,7 +409,7 @@ def stop_soloist() -> str:
     with _lock:
         if not _is_alive(_soloist_proc):
             _soloist_proc = None
-            return "Soloist is not running."
+            raise ToolError("Soloist is not running.")
         _terminate_soloist(_soloist_proc)
         _soloist_proc = None
         return "Soloist stopped."
@@ -359,9 +419,7 @@ def stop_soloist() -> str:
     description="Set Soloist as the active playback session. Requires Soloist to be running."
 )
 def activate_soloist() -> str:
-    ok, output = _run_ctl_if_running(["activate"])
-    if not ok:
-        return output
+    output = _run_ctl_if_running(["activate"])
     return "Successfully set Soloist as the active playback session"
 
 
@@ -371,40 +429,49 @@ def activate_soloist() -> str:
         All other actions do not require a URI.
         """)
 def manage_playback(
-    action: Literal["play", "pause", "next", "prev", "seek"],
-    uri: str | None = None,
-    ms: int | None = None,
-):
+    action: Annotated[
+        Literal["play", "pause", "next", "prev", "seek"],
+        Field(description="Playback action to execute"),
+    ],
+    uri: Annotated[
+        str | None,
+        Field(
+            description="Spotify URI to play (only for 'play'). Omit it to resume the current playback"
+        ),
+    ] = None,
+    ms: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            description="Position in milliseconds, 0 or greater (required for 'seek', ignored otherwise)",
+        ),
+    ] = None,
+) -> str:
     args = [action]
 
-    if action == "play" and uri:
+    if action == "play" and uri is not None:
         if not uri.startswith("spotify:"):
-            return f"Error: Provided URI has an invalid format."
+            raise ToolError("Provided URI has an invalid format.")
 
         args.append(uri)
 
     if action == "seek":
-        if not ms:
-            return f"Error: When using 'seek' command miliseconds must be provided."
+        if ms is None:
+            raise ToolError("When using 'seek' command milliseconds must be provided.")
 
         args.append(str(ms))
 
-    ok, output = _run_ctl_if_running(args)
-    if not ok:
-        return output
+    output = _run_ctl_if_running(args)
     return f"{action} command executed succesfully."
 
 
 @mcp.tool(
     description="Set playback volume. Must be a value between 0 and 100 (inclusive)"
 )
-def set_volume(value: int) -> str:
-    if not (value <= 100 and value >= 0):
-        return f"Error: Invalid value for volume."
-
-    ok, output = _run_ctl_if_running(["volume", str(value)])
-    if not ok:
-        return output
+def set_volume(
+    value: Annotated[int, Field(ge=0, le=100, description="Volume level, 0 to 100")],
+) -> str:
+    output = _run_ctl_if_running(["volume", str(value)])
     return f"Volume set to {value}"
 
 
@@ -412,15 +479,15 @@ def set_volume(value: int) -> str:
     description="Show daemon status, WebSocket availability, login state, and active-device state. Does not require login."
 )
 def get_status() -> str:
-    _, output = _run_ctl_if_running(["status"])
+    output = _run_ctl_if_running(["status"])
     return output
 
 
 @mcp.tool(description="Turn shuffle on or off for the current playback")
-def set_shuffle(enabled: bool) -> str:
-    ok, output = _run_ctl_if_running(["shuffle", "on" if enabled else "off"])
-    if not ok:
-        return output
+def set_shuffle(
+    enabled: Annotated[bool, Field(description="True to turn shuffle on, False to turn it off")],
+) -> str:
+    output = _run_ctl_if_running(["shuffle", "on" if enabled else "off"])
     return f"Shuffle turned {'on' if enabled else 'off'}."
 
 
@@ -431,40 +498,46 @@ def set_shuffle(enabled: bool) -> str:
         'track' repeats the current track.
         """
 )
-def set_repeat(mode: Literal["off", "context", "track"]) -> str:
-    ok, output = _run_ctl_if_running(["repeat", mode])
-    if not ok:
-        return output
+def set_repeat(
+    mode: Annotated[
+        Literal["off", "context", "track"], Field(description="Repeat mode to apply")
+    ],
+) -> str:
+    output = _run_ctl_if_running(["repeat", mode])
     return f"Repeat mode set to '{mode}'."
 
 
 @mcp.tool(description="Show the current playback state (now playing track, progress, etc.)")
 def get_now_playing() -> str:
-    _, output = _run_ctl_if_running(["now"])
+    output = _run_ctl_if_running(["now"])
     return output
 
 
 @mcp.tool(
-    description="Show the upcoming tracks in the queue. 'limit' must be a positive integer (default 10)."
+    description=f"Show the upcoming tracks in the queue. 'limit' must be an integer from 1 to {MAX_QUEUE_LIMIT} (default 10)."
 )
-def get_queue(limit: int = 10) -> str:
-    if limit <= 0:
-        return "Error: 'limit' must be a positive number."
-
-    _, output = _run_ctl_if_running(["queue", str(limit)])
+def get_queue(
+    limit: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=MAX_QUEUE_LIMIT,
+            description="Maximum number of upcoming tracks to show",
+        ),
+    ] = 10,
+) -> str:
+    output = _run_ctl_if_running(["queue", str(limit)])
     return output
 
 @mcp.tool(
     description="Add a track, album or any Spotify resource to the queue by providing its URI"
 )
-def add_to_queue(uri: str) -> str:
+def add_to_queue(uri: SpotifyUriParam) -> str:
     if not uri.startswith("spotify:"):
-                return f"Error: Provided URI has an invalid format."
-    
-    ok, output = _run_ctl_if_running(["add-to-queue", uri])
-    
-    if not ok:
-        return output
+        raise ToolError("Provided URI has an invalid format.")
+
+    output = _run_ctl_if_running(["add-to-queue", uri])
+
     return f"{uri} was successfully added to the queue."
 
 
@@ -475,13 +548,8 @@ def get_local_datetime() -> str:
 
 
 if __name__ == "__main__":
-    SERVER_TRANSPORT = os.environ.get(key="SERVER_TRANSPORT", default="http")
-    SERVER_HOST = os.environ.get(key="SERVER_HOST", default="127.0.0.1")
-    SERVER_PORT = int(os.environ.get(key="SERVER_PORT", default="8000"))
-
-    if SERVER_TRANSPORT not in ["http", "stdio"]:
-        raise Exception('SERVER_TRANSPORT must be "http" or "stdio"')
-
+    settings = get_settings()
+    
     # Pick up a Soloist that is already running so it can be controlled (and
     # keeps playing) across server restarts. stderr, because stdout carries
     # the protocol when using the stdio transport.
@@ -489,7 +557,14 @@ if __name__ == "__main__":
     if _soloist_proc is not None:
         print(f"Found running Soloist (pid {_soloist_proc.pid})", file=sys.stderr)
 
-    if SERVER_TRANSPORT == "http":
-        mcp.run(transport="streamable-http", host=SERVER_HOST, port=SERVER_PORT)
+    if settings.SERVER_TRANSPORT == "http":
+        print(f"URL: http://{settings.SERVER_HOST}:{settings.SERVER_PORT}{settings.SERVER_PATH}")
+
+        mcp.run(
+            transport="streamable-http",
+            host=settings.SERVER_HOST,
+            port=settings.SERVER_PORT,
+            streamable_http_path=settings.SERVER_PATH,
+        )
     else:
         mcp.run()
