@@ -14,4 +14,4 @@ class Album(BaseModel):
     name: str
     artist: str
     uri: str
-    tracks: list[Track]
+    tracks: list[Track] = []

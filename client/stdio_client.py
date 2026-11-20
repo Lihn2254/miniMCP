@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Configuración
+# Configuration
 MODEL_NAME = os.environ.get(key="MODEL_NAME", default="gemma4:e4b")
 SERVER_SCRIPT = "server.py"
 
@@ -24,7 +24,7 @@ async def run_mcp_client():
             print("Conectado al Servidor MCP.")
 
             mcp_tools = await session.list_tools()
-            # Imprimir respuesta JSON-RPC de list_tools
+            # Print the JSON-RPC response of list_tools
             # print("\n--- RAW MCP TOOLS RESPONSE ---")
             # print(mcp_tools.model_dump_json(indent=2))
             
@@ -41,7 +41,7 @@ async def run_mcp_client():
 
             print(f"Cargadas {len(ollama_tools)} herramientas del servidor. Iniciando chat...")
             
-            # Mensaje inicial para dar contexto al modelo
+            # Initial message that gives the model its context
             messages = [
                 {
                     "role": "system", 
@@ -105,7 +105,7 @@ async def run_mcp_client():
                     messages.append(final_response['message'])
                     print(f"\nGemma4 > {final_response['message']['content']}")
                 else:
-                    # Respuesta normal de texto sin uso de herramientas
+                    # Regular text response without tool use
                     print(f"\nGemma4 > {response['message']['content']}")
 
 if __name__ == "__main__":

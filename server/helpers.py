@@ -4,8 +4,9 @@ import subprocess
 
 from pydantic import ValidationError
 
-from server.config import get_settings
-from server.schemas import Album
+
+from schemas import Album
+from config import get_settings
 
 music_file = get_settings().MUSIC_FILE
 
@@ -76,6 +77,8 @@ def start_soloist() -> tuple[subprocess.Popen | None, str]:
                 api_key,
                 "--ws",
                 "127.0.0.1:0",
+                "--initial-volume",
+                "100"
             ],
             stdin=subprocess.DEVNULL,
             stdout=log,
@@ -99,7 +102,8 @@ def start_soloist() -> tuple[subprocess.Popen | None, str]:
 
 
 def _load_albums() -> list[Album]:
-    """Load items.json (a list of {id: description} objects) into a dict."""
+    """Load the albums file (a JSON list of album objects) into a list of
+    `Album` models. Entries that fail validation are skipped."""
 
     if not music_file.exists():
         return []
@@ -128,9 +132,14 @@ def _load_albums() -> list[Album]:
 
 
 def _save_album(album: Album) -> None:
-    """Persist one album to the albums file."""
+    """Append one album to the albums file."""
     albums = _load_albums()
     albums.append(album)
+    _write_albums(albums)
+
+
+def _write_albums(albums: list[Album]) -> None:
+    """Overwrite the albums file with the given list of albums."""
     with music_file.open("w", encoding="utf-8") as f:
         json.dump(
             [saved_album.model_dump() for saved_album in albums],

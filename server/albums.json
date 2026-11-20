@@ -37,5 +37,16 @@
         "uri": "spotify:track:77zsHdb523rUQnOYUSG3qb"
       }
     ]
+  },
+  {
+    "name": "Evangelion Finally",
+    "artist": "Various Artists",
+    "uri": "spotify:album:3MRZ3T8TutKAlQK0d7mqho",
+    "tracks": [
+      {
+        "name": "1QFPI3slA71XOdiBV5qti1",
+        "uri": "spotify:track:1QFPI3slA71XOdiBV5qti1"
+      }
+    ]
   }
 ]

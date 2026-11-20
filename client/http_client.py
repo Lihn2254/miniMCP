@@ -18,14 +18,13 @@ MAX_TOOL_ROUNDS = 8
 SYSTEM_PROMPT = {
                     "role": "system",
                     "content": (
-                        """Eres un asistente de IA útil conectado a un sistema de base de datos local que almacena recordatorios a través del Protocolo de Contexto de Modelos (MCP). 
-                                Puedes crear, leer, actualizar y eliminar elementos.
+                        """Eres un asistente de música conectado, a través del Protocolo de Contexto de Modelos (MCP), a una biblioteca local de álbumes y canciones y a Soloist, un reproductor de Spotify.
+                                Puedes crear, leer, actualizar y eliminar álbumes y canciones de la biblioteca, y controlar la reproducción con Soloist.
 
                                 ### Guidelines
                                 - Actúa siempre de forma profesional y concisa. Si no sabes algo, utiliza tus herramientas para averiguarlo.
-                                - Todas tus respuestas deben ser escritas en español, excepto los fragmentos de tu respuesta que incluyan contenido recuperado de los elementos de la base de datos.
+                                - Todas tus respuestas deben ser escritas en español, excepto los fragmentos de tu respuesta que incluyan contenido recuperado de la biblioteca (nombres de álbumes, artistas y canciones).
                                 - Dirígete al usuario con el pronombre 'tú'.
-                                - Si requieres crear un nuevo elemento en la lista y el usuario no te proporciona un ID, tú debes crealo.
                                 - Utiliza un formato de texto plano para tus respuestas, ya que la salida no cuenta con soporte para formado .md.
                                 - Cuando el usuario indique una hora o tiempo, asume siempre que está haciendo referencia a su propia zona horaria.
                         """
@@ -43,13 +42,22 @@ async def run_mcp_client():
         async with streamable_http_client(SERVER_URL) as streams:
             read, write = streams[0], streams[1]
             async with ClientSession(read, write) as session:
-                await session.initialize()
+                init_result = await session.initialize()
+
+                # Append the usage instructions published by the server to the client's own prompt
+                system_prompt = dict(SYSTEM_PROMPT)
+                if init_result.instructions:
+                    system_prompt["content"] += (
+                        "\n\n### Instrucciones del servidor (en inglés)\n"
+                        + init_result.instructions
+                    )
+
                 print(
                     f"Conectado al Servidor MCP.\n\tURL: {SERVER_URL}"
                 )
 
                 mcp_tools = await session.list_tools()
-                # Imprime la respuesta JSON-RPC de list_tools
+                # Print the JSON-RPC response of list_tools
                 # print("\n--- RAW MCP TOOLS RESPONSE ---")
                 # print(mcp_tools.model_dump_json(indent=2))
 
@@ -71,7 +79,7 @@ async def run_mcp_client():
                     f"Cargadas {len(ollama_tools)} herramientas del servidor. Iniciando chat..."
                 )
 
-                messages = [SYSTEM_PROMPT]
+                messages = [system_prompt]
 
                 model_common_name = get_model_common_name()
 
@@ -84,7 +92,7 @@ async def run_mcp_client():
                     if user_input.lower() in ["quit", "exit", "salir"]:
                         break
                     elif user_input.lower() == '/clear':
-                        messages = [SYSTEM_PROMPT]
+                        messages = [system_prompt]
                         print('     Memoria de la conversación eliminada')
                         continue
 

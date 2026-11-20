@@ -1,84 +1,109 @@
 # miniMCP
 
-Un proyecto ligero que demuestra cómo implementar y conectar un modelo de IA local (usando [Ollama](https://ollama.com/)) con herramientas personalizadas a través del **Protocolo de Contexto de Modelos** (Model Context Protocol o MCP). 
+A lightweight project that shows how to connect a local AI model (using [Ollama](https://ollama.com/)) to custom tools through the **Model Context Protocol** (MCP).
 
-En este proyecto, la IA actúa como un asistente de bases de datos que puede consultar y gestionar una base de datos en memoria utilizando operaciones CRUD (Crear, Leer, Actualizar, Eliminar).
+The AI acts as a music assistant. It can manage a small album and track library (stored in a JSON file) and control playback through Soloist (a Spotify CLI player).
 
-## Estructura del Proyecto
+## Project Structure
 
-* **`server.py`**: Es el servidor MCP creado con `FastMCP`. Mantiene una base de datos en memoria y expone herramientas (`tools`) para:
-  * Crear elementos (`create_item`)
-  * Leer elementos individuales (`read_item`)
-  * Leer múltiples elementos a la vez (`read_multiple_items`)
-  * Leer todos los elementos (`read_all_items`)
-  * Actualizar elementos (`update_item`)
-  * Eliminar elementos (`delete_item`)
+* **`server/server.py`**: The MCP server, built with `MCPServer`. It exposes the following tools:
+  * **Albums**: `register_album`, `get_album_by_name`, `get_album_by_uri`, `update_album`, `delete_album`
+  * **Tracks**: `register_track`, `get_track_by_name`, `get_track_by_uri`, `update_track`, `delete_track`
+  * **Soloist process**: `start_soloist`, `stop_soloist`, `activate_soloist`, `get_status`
+  * **Playback**: `manage_playback` (`play`, `pause`, `next`, `prev`, `seek`), `set_volume`, `set_shuffle`, `set_repeat`, `get_now_playing`, `get_queue`
+  * **Utilities**: `get_local_datetime`
 
-* **`stdio_client.py`** / **`http_client.py`**: Son los clientes que interactúan mediante la terminal. El primero se conecta al servidor MCP a través de los flujos de entrada/salida estándar (`stdio`) y el segundo a través de HTTP (`streamable-http`). Ambos leen las herramientas disponibles y establece un ciclo de chat con el usuario y el LLM de Ollama.
+* **`server/helpers.py`**: Helpers for reading and writing the album file and for running Soloist commands.
 
-* **`requirements.txt`**: Archivo con las dependencias principales del proyecto.
+* **`server/schemas.py`**: Pydantic models (`Album`, `Track`).
 
-## Requisitos y Dependencias
+* **`server/config.py`**: Settings loaded from the environment / `.env` file.
 
-Antes de iniciar el proyecto, asegúrate de tener instalado:
-1. **Python 3.10+**
-2. **Ollama** instalado y ejecutándose en tu máquina.
-3. El modelo que utiliza este repositorio, que por defecto es `gemma4:e4b`. Puedes descargarlo con el comando: 
+* **`server/albums.json`**: The album and track library.
+
+* **`client/stdio_client.py`** / **`client/http_client.py`**: Terminal clients. The first connects to the MCP server through standard input/output (`stdio`), the second through HTTP (`streamable-http`). Both load the available tools and start a chat loop between the user and the Ollama LLM.
+
+* **`requirements.txt`**: The project's main dependencies.
+
+## Requirements
+
+Before starting, make sure you have:
+1. **Python 3.12+**
+2. **Ollama** installed and running on your machine.
+3. The model this repository uses, `gemma4:e4b` by default. You can download it with:
    ```bash
    ollama run gemma4:e4b
    ```
+4. **Soloist** available in your `PATH`, and a `SOLOIST_API_KEY` environment variable, if you want to use the playback tools.
 
-## Instalación
+## Installation
 
-1. Clona el repositorio y navega hasta su carpeta:
+1. Clone the repository and move into its folder:
    ```bash
-   git clone <url-del-repo> miniMCP
+   git clone <repo-url> miniMCP
    cd miniMCP
    ```
 
-2. Crea y activa un entorno virtual (opcional pero muy recomendado):
+2. Create and activate a virtual environment (optional but highly recommended):
    ```bash
    python -m venv .venv
-   # En Windows:
+   # On Windows:
    .\.venv\Scripts\activate
-   # En macOS/Linux:
+   # On macOS/Linux:
    source .venv/bin/activate
    ```
 
-3. Instala las dependencias necesarias:
+3. Install the dependencies:
    ```bash
    pip install -r requirements.txt
-   pip install gradio
    ```
 
-## Uso
+4. Copy `.env.example` to `.env` and adjust it to your setup.
 
-Hay dos clientes, según el transporte MCP que quieras usar.
+## Configuration
 
-**stdio** (el cliente lanza el servidor por sí mismo):
+Settings are read from environment variables or from the `.env` file in the project root.
+
+| Variable | Used by | Description | Default |
+|---|---|---|---|
+| `SERVER_TRANSPORT` | server | `http` or `stdio` | `http` |
+| `SERVER_HOST` | server | Host to bind to when using HTTP | `127.0.0.1` |
+| `SERVER_PORT` | server | Port to bind to when using HTTP | `8000` |
+| `MUSIC_FILE` | server | Album library file (relative paths are resolved against `server/`) | `server/albums.json` |
+| `SOLOIST_API_KEY` | server | API key used to start Soloist | none (required for playback) |
+| `SERVER_URL` | HTTP client | URL of the MCP server | `http://127.0.0.1:8000/mcp` |
+| `MODEL_NAME` | clients | Ollama model to use | `gemma4:e4b` |
+| `NUM_CTX` | HTTP client | Context window size | `16384` |
+| `AUTO_START_OLLAMA` | HTTP client | Start Ollama automatically (`True`/`False`) | `False` |
+
+## Usage
+
+There are two clients, depending on the MCP transport you want to use.
+
+**stdio** (the client launches the server itself):
 ```bash
-python stdio_client.py
+python client/stdio_client.py
 ```
 
-**HTTP** (streamable HTTP; el servidor corre por separado):
+**HTTP** (streamable HTTP; the server runs separately):
 ```bash
-# Terminal 1: servidor en http://127.0.0.1:8000/mcp
-python server.py
+# Terminal 1: server at http://127.0.0.1:8000/mcp
+python server/server.py
 
-# Terminal 2: cliente
-python http_client.py
+# Terminal 2: client
+python client/http_client.py
 ```
-*Escribe tus preguntas al modelo directamente en la consola.*
+*Type your questions to the model directly in the console.*
 
 ---
 
-## Ejemplo de Interacción
+## Example Interaction
 
-Puedes probar decirle a la IA:
-* *"Crea un elemento con el ID 'tarea1' y contenido 'Comprar leche'"*
-* *"Muestra el contenido del área 'tarea1'"*
-* *"Actualiza la 'tarea1' y dime que la leche debe ser descremada"*
-* *"Lee los elementos 'tarea1' y 'tarea2'"*
-* *"Borra el ID 'tarea1'"*
+You can try telling the AI:
+* *"Create an album called 'For Lovers' by Lamp with the URI 'spotify:album:0gwS2D9sukMLXNvleEnYr2'"*
+* *"Add the track 'Rainy Tapestry' to that album"*
+* *"Find the track 'moon'"*
+* *"Start Soloist and play that album"*
+* *"Set the volume to 40, turn on shuffle and show me the queue"*
 
-La IA ejecutará automáticamente las herramientas del `server.py` sin que tú debas escribir el código o las llamadas directamente.
+The AI will run the tools in `server/server.py` automatically, so you don't need to write the code or the calls yourself.
