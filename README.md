@@ -34,7 +34,7 @@ Before starting, make sure you have:
    ```bash
    ollama run gemma4:e4b
    ```
-4. **Soloist** available in your `PATH`, and a `SOLOIST_API_KEY` environment variable, if you want to use the playback tools.
+4. **Soloist** available in your `PATH`, and a `SOLOIST_API_KEY` environment variable, if you want to use the playback tools. Stopping the server does not stop Soloist: when the server starts, it looks for a Soloist that is already running and takes control of it, so music keeps playing across server restarts. Use the `stop_soloist` tool to stop it.
 
 ## Installation
 

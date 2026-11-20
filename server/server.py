@@ -1,6 +1,7 @@
-import json, os, signal, subprocess
+import json, os, sys
 from typing import Literal
 
+import psutil
 from mcp.server.mcpserver import MCPServer
 import threading
 from datetime import datetime
@@ -16,6 +17,7 @@ This server manages a local library of albums and tracks and controls playback t
 ## Library
 - Albums and tracks are identified by their Spotify URI ('spotify:album:...' and 'spotify:track:...').
 - When asked to register an album or track without a URI or name, ask the user for them. Never invent a URI or name.
+- When asked to register an album or track use the available tools and ask user for the required parameters if needed. Never invent albums or tracks.
 - Tracks belong to an album: to register a track, first find the album and use its URI.
 
 ## Playback
@@ -33,32 +35,60 @@ mcp = MCPServer("MCPlayer_Server", instructions=SERVER_INSTRUCTIONS)
 
 
 _lock = threading.Lock()
-_soloist_proc: subprocess.Popen | None = None
+# The Soloist daemon, whether this server started it or found it already
+# running. It is deliberately NOT stopped when the server exits, so playback
+# survives a server restart.
+_soloist_proc: psutil.Process | None = None
+
+SOLOIST_PROCESS_NAME = "soloist"
 
 
-def _terminate_soloist(proc: subprocess.Popen) -> None:
+def _is_alive(proc: psutil.Process | None) -> bool:
+    """True if `proc` is still running (a zombie counts as not running)."""
+    if proc is None:
+        return False
+    try:
+        return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+
+
+def _is_soloist_daemon(name: str | None, cmdline: list[str]) -> bool:
+    """True if a process with this name and command line is the Soloist daemon.
+
+    `soloist ctl ...` invocations also run a process called soloist, but they
+    are short-lived clients and must not be mistaken for the daemon.
+    """
+    if os.path.splitext((name or "").lower())[0] != SOLOIST_PROCESS_NAME:
+        return False
+    return not (len(cmdline) > 1 and cmdline[1] == "ctl")
+
+
+def _find_running_soloist() -> psutil.Process | None:
+    """Look through the system's processes for an already running Soloist
+    daemon. If there are several, the oldest one is returned."""
+    candidates = [
+        p
+        for p in psutil.process_iter(["name", "cmdline", "create_time"])
+        if _is_soloist_daemon(p.info["name"], p.info["cmdline"] or [])
+        and _is_alive(p)
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda p: p.info["create_time"] or 0)
+
+
+def _terminate_soloist(proc: psutil.Process) -> None:
     """Ask the Soloist process to exit, killing it if it does not stop in time."""
-    proc.terminate()
     try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-
-
-def _shutdown_soloist() -> None:
-    """Stop the Soloist process, if any, when the server shuts down."""
-    global _soloist_proc
-
-    # Don't hang forever if a tool call is still holding the lock
-    acquired = _lock.acquire(timeout=5)
-    try:
-        proc, _soloist_proc = _soloist_proc, None
-        if proc is not None and proc.poll() is None:
-            _terminate_soloist(proc)
-    finally:
-        if acquired:
-            _lock.release()
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except psutil.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+    except psutil.NoSuchProcess:
+        pass  # it exited on its own in the meantime
 
 
 def _run_ctl_if_running(args: list[str]) -> tuple[bool, str]:
@@ -70,7 +100,7 @@ def _run_ctl_if_running(args: list[str]) -> tuple[bool, str]:
     global _soloist_proc
 
     with _lock:
-        if _soloist_proc is None or _soloist_proc.poll() is not None:
+        if not _is_alive(_soloist_proc):
             _soloist_proc = None
             return False, "Soloist is not running."
 
@@ -277,6 +307,18 @@ def get_album_by_uri(uri: str, include_tracks: bool = True) -> str:
 
     return "The album could not be found."
 
+@mcp.tool(description="Retrieve all registered albums")
+def get_all_albums(include_tracks: bool = False) -> str:
+    albums = _load_albums()
+
+    if len(albums) <= 0:
+        return f"There are no registered albums."
+
+    return "\n".join(
+        album.model_dump_json(exclude={"tracks"} if not include_tracks else None)
+        for album in albums
+    )
+
 
 @mcp.tool(
     description="Start the Soloist (Spotify CLI player) process in the background"
@@ -285,21 +327,27 @@ def start_soloist() -> str:
     global _soloist_proc
 
     with _lock:
-        if _soloist_proc is not None and _soloist_proc.poll() is None:
+        if _is_alive(_soloist_proc):
             return f"Soloist is already running (pid {_soloist_proc.pid})."
+
+        # It may have been started outside this server (e.g. manually)
+        existing = _find_running_soloist()
+        if existing is not None:
+            _soloist_proc = existing
+            return f"Soloist is already running (pid {existing.pid})."
 
         proc, message = _start_soloist()
         if proc is not None:
-            _soloist_proc = proc
+            _soloist_proc = psutil.Process(proc.pid)
         return message
 
 
-@mcp.tool(description="Stop the Soloist process started by start_soloist")
+@mcp.tool(description="Stop the Soloist process (the one started by start_soloist, or one that was already running)")
 def stop_soloist() -> str:
     global _soloist_proc
 
     with _lock:
-        if _soloist_proc is None or _soloist_proc.poll() is not None:
+        if not _is_alive(_soloist_proc):
             _soloist_proc = None
             return "Soloist is not running."
         _terminate_soloist(_soloist_proc)
@@ -315,29 +363,6 @@ def activate_soloist() -> str:
     if not ok:
         return output
     return "Successfully set Soloist as the active playback session"
-
-
-# @mcp.tool(
-#     description="Play an album by its Spotify URI"
-# )
-# def play(uri: str | None) -> str:
-#     if uri and not uri.startswith("spotify:"):
-#         return f"Error: The provided URI has an invalid format."
-
-#     global _soloist_proc
-
-#     with _lock:
-#         if _soloist_proc is None or _soloist_proc.poll() is not None:
-#             _soloist_proc = None
-#             return "Soloist is not running."
-
-#         args = ["play", uri]
-#         return_code, output = run_soloist_ctl_command(args)
-
-#         if return_code == -1:
-#             return f"Command failed with exit code {return_code}. Output: {output}"
-#         else:
-#             return f"Started album playback successfully."
 
 
 @mcp.tool(description="""
@@ -429,6 +454,19 @@ def get_queue(limit: int = 10) -> str:
     _, output = _run_ctl_if_running(["queue", str(limit)])
     return output
 
+@mcp.tool(
+    description="Add a track, album or any Spotify resource to the queue by providing its URI"
+)
+def add_to_queue(uri: str) -> str:
+    if not uri.startswith("spotify:"):
+                return f"Error: Provided URI has an invalid format."
+    
+    ok, output = _run_ctl_if_running(["add-to-queue", uri])
+    
+    if not ok:
+        return output
+    return f"{uri} was successfully added to the queue."
+
 
 @mcp.tool()
 def get_local_datetime() -> str:
@@ -444,20 +482,14 @@ if __name__ == "__main__":
     if SERVER_TRANSPORT not in ["http", "stdio"]:
         raise Exception('SERVER_TRANSPORT must be "http" or "stdio"')
 
-    # Turn termination signals into a normal interpreter exit so the `finally`
-    # below runs (Ctrl+C already raises KeyboardInterrupt). SIGBREAK only
-    # exists on Windows, where its default action kills the process outright.
-    def _exit_on_signal(_signum, _frame):
-        raise SystemExit(0)
+    # Pick up a Soloist that is already running so it can be controlled (and
+    # keeps playing) across server restarts. stderr, because stdout carries
+    # the protocol when using the stdio transport.
+    _soloist_proc = _find_running_soloist()
+    if _soloist_proc is not None:
+        print(f"Found running Soloist (pid {_soloist_proc.pid})", file=sys.stderr)
 
-    for _sig in (signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
-        if _sig is not None:
-            signal.signal(_sig, _exit_on_signal)
-
-    try:
-        if SERVER_TRANSPORT == "http":
-            mcp.run(transport="streamable-http", host=SERVER_HOST, port=SERVER_PORT)
-        else:
-            mcp.run()
-    finally:
-        _shutdown_soloist()
+    if SERVER_TRANSPORT == "http":
+        mcp.run(transport="streamable-http", host=SERVER_HOST, port=SERVER_PORT)
+    else:
+        mcp.run()

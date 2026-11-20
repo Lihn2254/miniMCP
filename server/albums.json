@@ -44,8 +44,12 @@
     "uri": "spotify:album:3MRZ3T8TutKAlQK0d7mqho",
     "tracks": [
       {
-        "name": "1QFPI3slA71XOdiBV5qti1",
+        "name": "The Cruel Angel's Thesis",
         "uri": "spotify:track:1QFPI3slA71XOdiBV5qti1"
+      },
+      {
+        "name": "KOMM, SUSSER TOD",
+        "uri": "spotify:track:0DI3WNmIyfi2GZLQwhYDQC"
       }
     ]
   }

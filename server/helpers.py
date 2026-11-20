@@ -83,7 +83,10 @@ def start_soloist() -> tuple[subprocess.Popen | None, str]:
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,
+            # Detach Soloist from the server's console/terminal so that stopping
+            # the server (e.g. Ctrl+C) does not stop playback.
             creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            start_new_session=(os.name != "nt"),
         )
     except FileNotFoundError:
         return None, "Error: 'soloist' executable was not found in PATH."
